@@ -22,7 +22,7 @@
        operation) next to the GUI exe so ResolveCli() finds it in-tree. -->
   <Target Name="CopyCliExe" AfterTargets="Build">
     <ItemGroup>
-      <CliExe Include="$(MSBuildThisFileDirectory)..\OrbisPkgTool\bin\$(Configuration)\net10.0-windows\OrbisPkgTool.exe" />
+      <CliExe Include="$(MSBuildThisFileDirectory)..\OrbisPkgTool\bin\$(Configuration)\net10.0\OrbisPkgTool.exe" />
     </ItemGroup>
     <Copy SourceFiles="@(CliExe)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(CliExe.Identity)')" />
   </Target>
