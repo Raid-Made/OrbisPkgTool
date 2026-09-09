@@ -429,8 +429,30 @@ static void RunExtract((string Pkg, string? Entry, string? OutDir, string Passco
 
 static void RunPkgInfo((string Pkg, string? Entry, string? OutDir, string Passcode, string Oformat) o)
 {
-    using var reader = new PkgReader(o.Pkg, o.Passcode);
+    try
+    {
+        using var reader = new PkgReader(o.Pkg, o.Passcode);
+        PrintPkgInfo(reader, metadataOnly: false);
+    }
+    catch (InvalidDataException ex)
+        when (ex.Message.Contains("Passcode mismatch", StringComparison.OrdinalIgnoreCase))
+    {
+        // Retail/finalized PKGs can still expose useful cleartext metadata
+        // such as param.sfo even when the package/PFS decryption key is not
+        // available. Re-open without passcode validation for metadata only.
+        using var reader = new PkgReader(
+            o.Pkg,
+            o.Passcode,
+            validatePasscode: false);
+
+        PrintPkgInfo(reader, metadataOnly: true);
+    }
+}
+
+static void PrintPkgInfo(PkgReader reader, bool metadataOnly)
+{
     var info = reader.GetInfo();
+
     Console.WriteLine($"Title        : {info.Title}");
     Console.WriteLine($"Title ID     : {info.TitleId}");
     Console.WriteLine($"Content ID   : {info.ContentId}");
@@ -438,8 +460,18 @@ static void RunPkgInfo((string Pkg, string? Entry, string? OutDir, string Passco
     Console.WriteLine($"Category     : {info.Category}");
     Console.WriteLine($"Content type : 0x{info.ContentType:X2}  flags 0x{info.ContentFlags:X8}");
     Console.WriteLine($"App version  : {info.AppVersion}");
+
+    if (!string.IsNullOrEmpty(info.TargetAppVersion))
+        Console.WriteLine($"Target ver   : {info.TargetAppVersion}");
+
     Console.WriteLine($"System ver   : {info.SystemVersion}");
-    Console.WriteLine($"Passcode     : {reader.PasscodeStatus}");
+    Console.WriteLine($"Package      : {(reader.Header.IsFinalized
+        ? "finalized/retail-style"
+        : "non-finalized/fake-style")}");
+
+    Console.WriteLine($"Passcode     : {(metadataOnly
+        ? "mismatch; metadata-only"
+        : reader.PasscodeStatus)}");
 }
 
 /// <summary>

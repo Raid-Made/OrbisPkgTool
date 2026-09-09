@@ -28,6 +28,7 @@ public sealed class PkgInfo
     public string Title = "";
     public string TitleId = "";
     public string AppVersion = "";
+    public string TargetAppVersion = "";
     public string SystemVersion = "";
     public string Category = "";
     public uint ContentType;

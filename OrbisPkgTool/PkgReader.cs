@@ -73,6 +73,7 @@ public sealed class PkgReader : IDisposable
             info.Title = sfo.GetString("TITLE");
             info.TitleId = sfo.GetString("TITLE_ID");
             info.AppVersion = sfo.GetString("APP_VER");
+            info.TargetAppVersion = sfo.GetString("TARGET_APP_VER");
             // SYSTEM_VER is a packed u32 (e.g. 0x05050000) — format as hex.
             var sysVer = sfo["SYSTEM_VER"];
             info.SystemVersion = sysVer != null && sysVer.Format == 0x0404
@@ -203,7 +204,8 @@ public sealed class PkgReader : IDisposable
     /// <summary>Raw entry table (Sc0 system entries).</summary>
     public IReadOnlyList<PkgEntry> Entries => _entries;
 
-    public PkgReader(string pkgPath, string passcode = DefaultPasscode, PkgKeySet? keySet = null)
+    public PkgReader(string pkgPath, string passcode = DefaultPasscode,
+        PkgKeySet? keySet = null, bool validatePasscode = true)
     {
         if (!File.Exists(pkgPath))
             throw new FileNotFoundException("PKG file not found", pkgPath);
@@ -228,7 +230,10 @@ public sealed class PkgReader : IDisposable
             _derivedKeys = new byte[7][];
             for (uint i = 0; i < 7; i++)
                 _derivedKeys[i] = PkgCrypto.DeriveKey(_header.ContentId, _passcode, i);
-            ValidatePasscode();
+            if (validatePasscode)
+                ValidatePasscode();
+            else
+                PasscodeStatus = "not checked (metadata-only)";
         }
         catch
         {

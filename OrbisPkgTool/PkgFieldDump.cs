@@ -143,6 +143,8 @@ static class PkgFieldDump
         0x0403 => "npbind.dat",
         0x0404 => "selfinfo.dat",
         0x0406 => "imageinfo.dat",
+        0x0407 => "target-deltainfo.dat",
+        0x0408 => "origin-deltainfo.dat",
         0x0409 => "psreserved.dat",
         0x1000 => "param.sfo",
         0x1001 => "playgo-chunk.dat",

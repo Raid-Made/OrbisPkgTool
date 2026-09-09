@@ -81,6 +81,7 @@ public static class PkgEntryIds
     /// original 60FPS patch — orbis names it "app/playgo-chunk.dat").</summary>
     public const uint AppPlaygoChunkDat = 0x00001008;
     /// <summary>Patch-only: delta info file (orbis names it "origin-deltainfo.dat").</summary>
+    public const uint TargetDeltaInfo = 0x00000407;
     public const uint OriginDeltaInfo = 0x00000408;
     // Entry IDs below verified against the original Digimon PKG's entry table
     // (built by orbis-pub-cmd 3.87) — NOT the older psdevwiki values.
@@ -123,6 +124,7 @@ public static class PkgEntryNames
         [PkgEntryIds.PlaygoChunkSha] = "playgo-chunk.sha",
         [PkgEntryIds.PlaygoManifestXml] = "playgo-manifest.xml",
         [PkgEntryIds.AppPlaygoChunkDat] = "app/playgo-chunk.dat",
+        [PkgEntryIds.TargetDeltaInfo] = "target-deltainfo.dat",
         [PkgEntryIds.OriginDeltaInfo] = "origin-deltainfo.dat",
         [PkgEntryIds.PronunciationXml] = "pronunciation.xml",
         [PkgEntryIds.PronunciationSig] = "pronunciation.sig",
