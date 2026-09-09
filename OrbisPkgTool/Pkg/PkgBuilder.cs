@@ -384,7 +384,7 @@ public static class PkgBuilder
     {
         options ??= new BuildOptions();
         // Build the entry list + table in memory (entry data is small).
-        var entries = BuildAssembleEntries(project, files, passcode, dk, innerPfsSize, sc0Files);
+        var entries = BuildAssembleEntries(project, files, passcode, dk, innerPfsSize, sc0Files, options);
         entries = entries.OrderBy(e => e.Id).ToList();
         int count = entries.Count;
 
@@ -749,7 +749,8 @@ public static class PkgBuilder
 
     /// <summary>Builds the PKG entry list (shared with Assemble).</summary>
     private static List<BuildEntry> BuildAssembleEntries(Gp4Project project, IReadOnlyList<PfsSourceFile> files,
-        string passcode, byte[][] dk, long innerPfsSize, List<(string Path, byte[] Data)>? sc0Files)
+        string passcode, byte[][] dk, long innerPfsSize, List<(string Path, byte[] Data)>? sc0Files,
+        BuildOptions options)
     {
         var entries = new List<BuildEntry>();
 
@@ -790,7 +791,12 @@ public static class PkgBuilder
         long img0Mb = innerPfsSize / (1000 * 1000);
         sfo.SetString("PUBTOOLINFO", $"c_date={DateTime.UtcNow:yyyyMMdd},img0_l0_size={img0Mb},img0_l1_size=0,img0_sc_ksize=512,img0_pc_ksize=832", 0x200);
         sfo.SetInt("PUBTOOLVER", 0x02890000);
-        entries.Add(new BuildEntry { Id = PkgEntryIds.ParamSfo, Name = "param.sfo", Data = sfo.Serialize() });
+        entries.Add(new BuildEntry
+        {
+            Id = PkgEntryIds.ParamSfo,
+            Name = "param.sfo",
+            Data = options.ParamSfoOverride ?? sfo.Serialize()
+        });
 
         entries.Add(new BuildEntry { Id = PkgEntryIds.PlaygoChunkDat, Name = "playgo-chunk.dat", Data = MakePlayGoChunkDat(1) });
         entries.Add(new BuildEntry { Id = PkgEntryIds.PlaygoChunkSha, Name = "playgo-chunk.sha", Data = new byte[4] });
@@ -1006,7 +1012,12 @@ public static class PkgBuilder
         long img0Mb = innerPfsSize / (1000 * 1000);
         sfo.SetString("PUBTOOLINFO", $"c_date={DateTime.UtcNow:yyyyMMdd},img0_l0_size={img0Mb},img0_l1_size=0,img0_sc_ksize=512,img0_pc_ksize=832", 0x200);
         sfo.SetInt("PUBTOOLVER", 0x02890000);
-        entries.Add(new BuildEntry { Id = PkgEntryIds.ParamSfo, Name = "param.sfo", Data = sfo.Serialize() });
+        entries.Add(new BuildEntry
+        {
+            Id = PkgEntryIds.ParamSfo,
+            Name = "param.sfo",
+            Data = options.ParamSfoOverride ?? sfo.Serialize()
+        });
 
         // PlayGo entries
         entries.Add(new BuildEntry { Id = PkgEntryIds.PlaygoChunkDat, Name = "playgo-chunk.dat", Data = MakePlayGoChunkDat(1) });

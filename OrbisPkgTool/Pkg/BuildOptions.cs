@@ -58,6 +58,14 @@ public sealed class BuildOptions
     /// <summary>Optional content_flags (0x78) override (repack carries it).</summary>
     public uint? ContentFlagsOverride { get; set; }
 
+    /// <summary>
+    /// Optional exact PARAM.SFO bytes to embed as Sc0/param.sfo.
+    /// Used by retail-to-FPKG conversion so patch metadata such as
+    /// TARGET_APP_VER, ATTRIBUTE, service IDs and PUBTOOLINFO survive rebuild.
+    /// When null, the builder generates PARAM.SFO as before.
+    /// </summary>
+    public byte[]? ParamSfoOverride { get; set; }
+
     /// <summary>Run the 8-stage structured validation on the finished PKG.</summary>
     public bool Validate { get; set; }
 
