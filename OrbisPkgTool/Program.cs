@@ -46,6 +46,9 @@ try
         case "debug":
             RunInspect(ParseOptions(cmdArgs, out _).Pkg);
             break;
+        case "ekpfs":
+            RunEkpfs(ParseOptions(cmdArgs, out _).Pkg);
+            break;
         case "pkginfo":
         case "info":
             RunPkgInfo(ParseOptions(cmdArgs, out _));
@@ -321,6 +324,12 @@ static (string Pkg, string? Entry, string? OutDir, string Passcode, string Oform
             case "--no_passcode":
                 passcode = PkgReader.DefaultPasscode;
                 break;
+            case "--ekpfs":
+                if (i + 1 >= args.Length)
+                    throw new ArgumentException(
+                        "--ekpfs requires a 64-character hex value.");
+                i++;
+                break;
             case "--oformat" when i + 1 < args.Length:
                 oformat = args[++i];
                 break;
@@ -354,9 +363,50 @@ static (string Pkg, string? Entry, string? OutDir, string Passcode, string Oform
     return (pkg, entry, outDir, passcode, oformat);
 }
 
+static byte[]? GetEkpfsOverride()
+{
+    var args = Environment.GetCommandLineArgs();
+
+    for (int i = 1; i < args.Length; i++)
+    {
+        if (!args[i].Equals("--ekpfs", StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        if (i + 1 >= args.Length)
+            throw new ArgumentException(
+                "--ekpfs requires a 64-character hex value.");
+
+        string hex = args[i + 1].Trim();
+
+        if (hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            hex = hex[2..];
+
+        if (hex.Length != 64)
+            throw new ArgumentException(
+                $"EKPFS must be 64 hex characters (32 bytes); got {hex.Length}.");
+
+        try
+        {
+            return Convert.FromHexString(hex);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException(
+                "EKPFS contains non-hexadecimal characters.");
+        }
+    }
+
+    return null;
+}
+
 static void RunList((string Pkg, string? Entry, string? OutDir, string Passcode, string Oformat) o)
 {
-    using var reader = new PkgReader(o.Pkg, o.Passcode);
+    var ekpfs = GetEkpfsOverride();
+    using var reader = new PkgReader(
+        o.Pkg,
+        o.Passcode,
+        validatePasscode: ekpfs == null,
+        ekpfsOverride: ekpfs);
     bool longFormat = o.Oformat.Contains("long", StringComparison.OrdinalIgnoreCase);
     bool packedSize = o.Oformat.Contains("packed_size", StringComparison.OrdinalIgnoreCase);
     var files = reader.ListFiles()
@@ -379,7 +429,12 @@ static void RunExtract((string Pkg, string? Entry, string? OutDir, string Passco
     if (o.OutDir == null)
         throw new ArgumentException("No output directory specified.");
     Directory.CreateDirectory(o.OutDir);
-    using var reader = new PkgReader(o.Pkg, o.Passcode);
+    var ekpfs = GetEkpfsOverride();
+    using var reader = new PkgReader(
+        o.Pkg,
+        o.Passcode,
+        validatePasscode: ekpfs == null,
+        ekpfsOverride: ekpfs);
     if (reader.PasscodeStatus.StartsWith("passcode mismatch", StringComparison.Ordinal))
         Console.Error.WriteLine($"[warn] {reader.PasscodeStatus}");
 
@@ -2528,6 +2583,21 @@ static void RunSelfTest()
     Console.WriteLine("selftest complete.");
 }
 
+static void RunEkpfs(string pkgPath)
+{
+    using var reader = new PkgReader(pkgPath);
+
+    // Trigger IMAGE_KEY -> EKPFS recovery.
+    _ = reader.ListFiles();
+
+    if (reader.Ekpfs == null)
+        throw new InvalidDataException(
+            $"Unable to recover EKPFS: {reader.EkpfsStatus}");
+
+    Console.WriteLine(
+        Convert.ToHexString(reader.Ekpfs).ToLowerInvariant());
+}
+
 static void RunInspect(string pkgPath)
 {
     using var reader = new PkgReader(pkgPath);
@@ -3196,11 +3266,13 @@ OrbisPkgTool : build, inspect, extract and check PS4 .pkg files
 
     Other:
       inspect     <pkg>                     full PFS tree dump (debugging)
+      ekpfs       <pkg>                     recover and print EKPFS from an FPKG
       bench       <pkg>                     measure listing speed
       selftest                              check the built-in crypto keys
 
   Common option (accepted by most commands):
     --passcode <code>    32-character passcode (default: 00000000000000000000000000000000)
+    --ekpfs <hex>       use a supplied 32-byte EKPFS key for Image0/PFS
 
   Examples:
     OrbisPkgTool info ""My Game [CUSA12345].pkg""

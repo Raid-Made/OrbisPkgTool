@@ -205,7 +205,8 @@ public sealed class PkgReader : IDisposable
     public IReadOnlyList<PkgEntry> Entries => _entries;
 
     public PkgReader(string pkgPath, string passcode = DefaultPasscode,
-        PkgKeySet? keySet = null, bool validatePasscode = true)
+        PkgKeySet? keySet = null, bool validatePasscode = true,
+        byte[]? ekpfsOverride = null)
     {
         if (!File.Exists(pkgPath))
             throw new FileNotFoundException("PKG file not found", pkgPath);
@@ -215,6 +216,17 @@ public sealed class PkgReader : IDisposable
         _pkgPath = pkgPath;
         _passcode = passcode;
         _keySet = keySet ?? PkgKeySet.Standard;
+
+        if (ekpfsOverride != null)
+        {
+            if (ekpfsOverride.Length != 32)
+                throw new ArgumentException(
+                    "EKPFS must be exactly 32 bytes.",
+                    nameof(ekpfsOverride));
+
+            _ekpfs = ekpfsOverride.ToArray();
+            EkpfsStatus = "provided by caller (32 bytes)";
+        }
         // Extraction reads large PKGs for extended periods. A larger buffer
         // reduces managed I/O calls while PFS/PFSC perform their own seeks.
         _stream = new FileStream(pkgPath, FileMode.Open, FileAccess.Read, FileShare.Read,
@@ -232,6 +244,8 @@ public sealed class PkgReader : IDisposable
                 _derivedKeys[i] = PkgCrypto.DeriveKey(_header.ContentId, _passcode, i);
             if (validatePasscode)
                 ValidatePasscode();
+            else if (ekpfsOverride != null)
+                PasscodeStatus = "not checked (EKPFS supplied)";
             else
                 PasscodeStatus = "not checked (metadata-only)";
         }
