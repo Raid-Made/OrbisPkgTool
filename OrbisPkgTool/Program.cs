@@ -115,6 +115,10 @@ try
         case "repack":
             RunRepack(cmdArgs[1..]);
             break;
+        case "convert-update":
+        case "convertpatch":
+            RunConvertUpdate(cmdArgs[1..]);
+            break;
         case "merge":
             RunMerge(cmdArgs[1..]);
             break;
@@ -1725,6 +1729,393 @@ static void RunTrp(string[] args)
     }
 }
 
+/// <summary>
+/// Experimental retail-update -> fake-patch conversion.
+///
+/// This converts the parts we currently understand:
+///   supplied EKPFS -> decrypted Image0
+///   clear Sc0 metadata -> rebuilt fake Sc0
+///   retail PARAM.SFO/header metadata -> preserved
+///
+/// It does NOT yet implement base-package remarry/application binding.
+/// </summary>
+static void RunConvertUpdate(string[] args)
+{
+    string? pkg = null;
+    string? outFile = null;
+    string? workDir = null;
+    bool keepWork = false;
+    bool validate = false;
+    int workers = 1;
+    string pfscMode = "compressed";
+
+    for (int i = 0; i < args.Length; i++)
+    {
+        switch (args[i])
+        {
+            case "--ekpfs":
+                // Parsed centrally by GetEkpfsOverride(); skip its value here.
+                if (i + 1 >= args.Length)
+                    throw new ArgumentException(
+                        "--ekpfs requires a 64-character hex value.");
+                i++;
+                break;
+
+            case "--out" when i + 1 < args.Length:
+                outFile = args[++i];
+                break;
+
+            case "--work" when i + 1 < args.Length:
+                workDir = args[++i];
+                break;
+
+            case "--keep-work":
+                keepWork = true;
+                break;
+
+            case "--validate":
+                validate = true;
+                break;
+
+            case "--workers" when i + 1 < args.Length:
+                if (!int.TryParse(args[++i], out workers) || workers < 0)
+                    throw new ArgumentException(
+                        "--workers must be zero or a positive integer.");
+                break;
+
+            case "--pfsc-mode" when i + 1 < args.Length:
+                pfscMode = args[++i];
+                if (!pfscMode.Equals("compressed",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !pfscMode.Equals("store",
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        "--pfsc-mode must be compressed or store.");
+                break;
+
+            default:
+                if (!args[i].StartsWith('-') && pkg == null)
+                    pkg = args[i];
+                break;
+        }
+    }
+
+    if (pkg == null || !File.Exists(pkg))
+    {
+        Console.Error.WriteLine(
+            "usage: convert-update <update.pkg> --ekpfs <64hex> [--out update-fpkg.pkg]");
+        Console.Error.WriteLine(
+            "       [--work <dir>] [--keep-work] [--workers N]");
+        Console.Error.WriteLine(
+            "       [--pfsc-mode compressed|store] [--validate]");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    byte[]? ekpfs = GetEkpfsOverride();
+    if (ekpfs == null)
+        throw new ArgumentException(
+            "convert-update requires --ekpfs <64-hex-character key>.");
+
+    pkg = Path.GetFullPath(pkg);
+
+    outFile ??= Path.Combine(
+        Directory.GetCurrentDirectory(),
+        Path.GetFileNameWithoutExtension(pkg) + "-fpkg.pkg");
+
+    outFile = Path.GetFullPath(outFile);
+
+    if (string.Equals(pkg, outFile, StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException(
+            "Output PKG must be different from the input PKG.");
+
+    workDir ??= Path.Combine(
+        Path.GetTempPath(),
+        "pkg_convert_" +
+        Path.GetFileNameWithoutExtension(pkg)[..
+            Math.Min(32, Path.GetFileNameWithoutExtension(pkg).Length)] +
+        "_" + Guid.NewGuid().ToString("N")[..10]);
+
+    workDir = Path.GetFullPath(workDir);
+
+    string dumpDir = Path.Combine(workDir, "dump");
+    string image0 = Path.Combine(dumpDir, "Image0");
+    string sc0 = Path.Combine(dumpDir, "Sc0");
+    string gp4Path = Path.Combine(workDir, "update.gp4");
+
+    Directory.CreateDirectory(workDir);
+
+    Console.WriteLine("Experimental retail update conversion");
+    Console.WriteLine($"  Input : {pkg}");
+    Console.WriteLine($"  Output: {outFile}");
+    Console.WriteLine($"  Work  : {workDir}");
+    Console.WriteLine();
+
+    try
+    {
+        using var reader = new PkgReader(
+            pkg,
+            PkgReader.DefaultPasscode,
+            validatePasscode: false,
+            ekpfsOverride: ekpfs);
+
+        var info = reader.GetInfo();
+
+        if (info.Type != PkgType.Patch)
+            throw new InvalidOperationException(
+                $"Input must be a Patch PKG; detected {info.Type}.");
+
+        Console.WriteLine(
+            $"  Patch : {info.TitleId} {info.AppVersion} " +
+            $"(target {info.TargetAppVersion})");
+        Console.WriteLine(
+            $"  Header: type=0x{reader.Header.ContentType:X2} " +
+            $"flags=0x{reader.Header.ContentFlags:X8}");
+
+        // The exact retail SFO is clear in our Borderlands sample.
+        // Preserve it byte-for-byte rather than synthesizing a generic one.
+        byte[] originalSfo;
+        try
+        {
+            originalSfo =
+                reader.ExtractEntryBytes(PkgEntryIds.ParamSfo);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "Could not read the original patch PARAM.SFO. " +
+                "This converter currently requires a readable Sc0 PARAM.SFO.",
+                ex);
+        }
+
+        // Force the supplied EKPFS through the full PFS/PFSC tree before
+        // spending time extracting gigabytes.
+        var listing = reader.ListFiles();
+
+        if (!string.IsNullOrEmpty(reader.LastPfsError))
+            throw new InvalidOperationException(
+                "The supplied EKPFS could not open Image0: " +
+                reader.LastPfsError);
+
+        int imageFiles = listing.Count(f =>
+            !f.IsDirectory &&
+            f.Path.StartsWith(
+                "Image0/", StringComparison.OrdinalIgnoreCase));
+
+        if (imageFiles == 0 && reader.Header.PfsImageSize != 0)
+            throw new InvalidOperationException(
+                "The package contains a PFS image but no Image0 files " +
+                "could be read with the supplied EKPFS.");
+
+        Console.WriteLine($"  Image0: {imageFiles} files readable");
+        Console.WriteLine();
+        Console.WriteLine("Extracting retail patch...");
+
+        int done = 0, total = 0;
+
+        var failures = reader.ExtractAll(
+            dumpDir,
+            new Progress<(int Current, int Total, string CurrentFile)>(x =>
+            {
+                done = x.Current;
+                total = x.Total;
+
+                if (total <= 0)
+                    return;
+
+                int pct = (int)(100.0 * done / total);
+                string line =
+                    $"  [{pct,3}%] {done}/{total} {x.CurrentFile}";
+
+                int width = SafeWindowWidth();
+                if (line.Length < width)
+                    line += new string(' ', width - line.Length);
+
+                Console.Write($"\r{line}");
+            }),
+            new ExtractAllOptions
+            {
+                ContinueOnError = true
+            });
+
+        Console.WriteLine();
+
+        var imageFailures = failures
+            .Where(f => f.Path.StartsWith(
+                "Image0/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (imageFailures.Count != 0)
+            throw new InvalidOperationException(
+                $"{imageFailures.Count} Image0 file(s) failed extraction. " +
+                $"First failure: {imageFailures[0].Path}: " +
+                imageFailures[0].Exception.Message);
+
+        var scFailures = failures
+            .Where(f => f.Path.StartsWith(
+                "Sc0/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (scFailures.Count != 0)
+        {
+            Console.WriteLine(
+                $"  [note] {scFailures.Count} encrypted/unreadable Sc0 " +
+                "entry/entries were not carried through.");
+
+            foreach (var failure in scFailures.Take(8))
+                Console.WriteLine(
+                    $"         {failure.Path}: {failure.Exception.Message}");
+
+            if (scFailures.Count > 8)
+                Console.WriteLine(
+                    $"         ... and {scFailures.Count - 8} more");
+        }
+
+        if (!Directory.Exists(image0))
+            throw new InvalidOperationException(
+                "Extraction completed without an Image0 directory.");
+
+        // Stage readable Sc0 files beneath sce_sys. PkgBuilder will map
+        // recognized sce_sys paths back into Sc0 entries while leaving real
+        // Image0 sce_sys content in the inner PFS.
+        if (Directory.Exists(sc0))
+        {
+            string sceSys = Path.Combine(image0, "sce_sys");
+            Directory.CreateDirectory(sceSys);
+
+            foreach (string source in Directory.EnumerateFiles(
+                         sc0, "*", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetRelativePath(sc0, source);
+                string dest = Path.Combine(sceSys, rel);
+
+                Directory.CreateDirectory(
+                    Path.GetDirectoryName(dest)!);
+
+                File.Copy(source, dest, overwrite: true);
+            }
+        }
+
+        // Generate an actual patch GP4 rather than an app GP4.
+        var project = OrbisPkgTool.Gp4.Gp4Project.FromFolder(
+            image0,
+            isPatch: true,
+            title: info.Title,
+            titleId: info.TitleId,
+            contentId: info.ContentId,
+            passcode: PkgBuilder.DefaultPasscode);
+
+        if (!string.IsNullOrWhiteSpace(info.AppVersion))
+            project.AppVersion = info.AppVersion;
+
+        try
+        {
+            var sfo = OrbisPkgTool.Sfo.ParamSfo.Parse(originalSfo);
+            string version = sfo.GetString("VERSION");
+            if (!string.IsNullOrWhiteSpace(version))
+                project.Version = version;
+        }
+        catch
+        {
+            // The exact bytes are still preserved through ParamSfoOverride.
+        }
+
+        File.WriteAllText(gp4Path, project.Serialize());
+
+        Console.WriteLine();
+        Console.WriteLine("Building fake patch...");
+        Console.WriteLine(
+            $"  Preserving content_type  0x{reader.Header.ContentType:X2}");
+        Console.WriteLine(
+            $"  Preserving content_flags 0x{reader.Header.ContentFlags:X8}");
+
+        var buildOptions = new BuildOptions
+        {
+            Passcode = PkgBuilder.DefaultPasscode,
+
+            PfscMode = pfscMode.Equals(
+                    "store", StringComparison.OrdinalIgnoreCase)
+                ? PfscMode.Store
+                : PfscMode.Compressed,
+
+            ContentTypeOverride = reader.Header.ContentType,
+            ContentFlagsOverride = reader.Header.ContentFlags,
+            ParamSfoOverride = originalSfo,
+            Workers = workers,
+            Validate = false,
+
+            Progress = (stage, bytesDone, bytesTotal) =>
+            {
+                if (bytesTotal <= 0)
+                    return;
+
+                int pct =
+                    (int)(100.0 * bytesDone / bytesTotal);
+
+                string line =
+                    $"  [{pct,3}%] {stage} " +
+                    $"({bytesDone / 1e6:F0}/{bytesTotal / 1e6:F0} MB)";
+
+                int width = SafeWindowWidth();
+                if (line.Length < width)
+                    line += new string(' ', width - line.Length);
+
+                Console.Write($"\r{line}");
+            },
+        };
+
+        PkgBuilder.Build(
+            gp4Path,
+            image0,
+            outFile,
+            buildOptions);
+
+        Console.WriteLine();
+
+        if (!File.Exists(outFile))
+            throw new InvalidOperationException(
+                "Builder returned without producing the output PKG.");
+
+        Console.WriteLine(
+            $"Built experimental fake patch: {outFile}");
+        double sizeGiB =
+            new FileInfo(outFile).Length / 1024.0 / 1024.0 / 1024.0;
+
+        Console.WriteLine($"  Size: {sizeGiB:F2} GiB");
+
+        if (validate)
+        {
+            Console.WriteLine();
+            RunValidate(
+                outFile,
+                PkgBuilder.DefaultPasscode,
+                fakeTolerant: true);
+
+            if (Environment.ExitCode != 0)
+                throw new InvalidOperationException(
+                    "Built package failed validation.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "NOTE: conversion succeeded structurally, but base-package");
+        Console.WriteLine(
+            "      remarry/application binding is NOT implemented yet.");
+
+        CleanupWorkDirOnSuccess(
+            workDir,
+            outFile,
+            keepWork);
+    }
+    catch
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            $"Work directory retained for debugging: {workDir}");
+        throw;
+    }
+}
+
 /// <summary>orbis-pub-gen equivalent: build a fake PKG from a GP4 project + source folder.</summary>
 static void RunPkgBuild(string[] args)
 {
@@ -3261,6 +3652,7 @@ OrbisPkgTool : build, inspect, extract and check PS4 .pkg files
 
     Prepare / convert:
       restructure <dump-folder> [--check]   tidy an extracted dump for building
+      convert-update <update.pkg> --ekpfs   experimental retail patch -> FPKG
       sfo         read|create|set|check     param.sfo tools
       trp         list|extract|create       trophy (.trp) tools
 
@@ -3333,6 +3725,31 @@ extract : Extract files from a PKG to a folder
     extract game.pkg:Sc0/param.sfo extracted
     extract game.pkg:Image0/eboot.bin extracted
 "); break;
+        case "convert-update": case "convertpatch":
+            h.WriteLine(@"
+convert-update : Experimental retail update -> fake patch conversion
+
+  Usage:
+    convert-update <update.pkg> --ekpfs <64hex> [options]
+
+  Required:
+    --ekpfs <hex>        32-byte EKPFS used to decrypt Image0/PFS
+
+  Options:
+    --out <pkg>          output fake patch PKG
+    --work <dir>         work/extraction directory
+    --keep-work          retain extracted files after success
+    --workers N          PFSC compression workers (1 default, 0 = all)
+    --pfsc-mode <mode>   compressed (default) | store
+    --validate           run fake-tolerant structural validation
+
+  This preserves the original PARAM.SFO, content type and content flags.
+
+  IMPORTANT:
+    This does not yet implement base-package remarry/application binding.
+");
+            break;
+
         case "verify":
             h.WriteLine(@"
 verify : Quick check of PKG header hashes and signatures (fast, CPU only)
