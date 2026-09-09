@@ -68,6 +68,13 @@ public static class PfscDeflate
 
     private static bool Load()
     {
+        // The current P/Invoke struct uses the Windows zlib ABI, where
+        // unsigned long is 32-bit. Unix x86-64 uses a different z_stream
+        // layout, so do not load native zlib there until a Unix ABI wrapper
+        // is implemented. Callers safely fall back to SharpZipLib.
+        if (!OperatingSystem.IsWindows())
+            return false;
+
         try
         {
             IntPtr lib = IntPtr.Zero;
