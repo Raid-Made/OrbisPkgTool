@@ -87,9 +87,9 @@ dotnet build OrbisPkgTool/OrbisPkgTool.csproj -c Release
 ./OrbisPkgTool/bin/Release/net10.0/OrbisPkgTool --help
 ```
 
-Builds stage temporary files under `$TMPDIR` (default `/tmp`). If `/tmp` is a small or RAM-backed tmpfs, point `TMPDIR` at a disk with enough free space before building large packages. `orbis-build` needs Sony's Windows-only `orbis-pub-cmd.exe` and is not supported on Linux.
+Builds stage temporary files under `$TMPDIR` (default `/tmp`). If `/tmp` is a small or RAM-backed tmpfs, point `TMPDIR` at a disk with enough free space before building large packages. `orbis-build` runs Sony's Windows-only `orbis-pub-cmd.exe` through Wine (`wine` on `PATH`, or set `ORBISPKG_WINE`); point `ORBIS_PUB_CMD` at the exe if it is not next to the tool.
 
-SharpZipLib is restored from NuGet. A native `zlib1.dll` is optional and is used for PFSC compression when found. The search order is:
+SharpZipLib is restored from NuGet. Native zlib is optional and is used for PFSC compression when found. On Linux the system `libz.so.1` is used (install `zlib1g` / `zlib` if missing); on Windows the search order is:
 
 - `%ORBISPKG_ZLIB%`
 - the executable directory

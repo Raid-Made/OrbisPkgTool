@@ -949,20 +949,38 @@ public static class PkgBuilder
             w.WriteLine("</psproject>");
         }
 
-        // Invoke orbis-pub-cmd
+        // Invoke orbis-pub-cmd (through Wine on Linux/macOS)
         var psi = new ProcessStartInfo
         {
-            FileName = orbisPath,
-            Arguments = $"img_create \"{orbisGp4}\" \"{outputPath}\"",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        if (OperatingSystem.IsWindows())
+        {
+            psi.FileName = orbisPath;
+        }
+        else
+        {
+            psi.FileName = FindWine() ?? throw new FileNotFoundException(
+                "orbis-pub-cmd.exe is a Windows program; install Wine (or set ORBISPKG_WINE) to run it on this OS.");
+            psi.ArgumentList.Add(Path.GetFullPath(orbisPath));
+            orbisGp4 = ToWinePath(orbisGp4);
+            outputPath = ToWinePath(outputPath);
+        }
+        psi.ArgumentList.Add("img_create");
+        psi.ArgumentList.Add(orbisGp4);
+        psi.ArgumentList.Add(outputPath);
         using var proc = Process.Start(psi)!;
+        // Drain both pipes while waiting so a chatty build can't fill a pipe and deadlock.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
         proc.WaitForExit();
+        string stderr = stderrTask.Result;
+        _ = stdoutTask.Result;
         if (proc.ExitCode != 0)
-            throw new Exception($"orbis-pub-cmd img_create failed (exit {proc.ExitCode}): {proc.StandardError.ReadToEnd()}");
+            throw new Exception($"orbis-pub-cmd img_create failed (exit {proc.ExitCode}): {stderr}");
     }
 
     // ─── C# PKG assembler ───────────────────────────────────────────
@@ -1356,8 +1374,30 @@ public static class PkgBuilder
         return $"EP0001-CUSA00001_00-{hash[..16].ToUpperInvariant()}";
     }
 
+    /// <summary>Wine binary for running orbis-pub-cmd.exe off Windows: ORBISPKG_WINE, else wine/wine64 on PATH.</summary>
+    private static string? FindWine()
+    {
+        string? env = Environment.GetEnvironmentVariable("ORBISPKG_WINE");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+            foreach (var name in new[] { "wine", "wine64" })
+            {
+                if (dir.Length == 0) continue;
+                var p = Path.Combine(dir, name);
+                if (File.Exists(p)) return p;
+            }
+        return null;
+    }
+
+    /// <summary>Maps a Unix path to Wine's default Z: drive (Z:\ = /).</summary>
+    private static string ToWinePath(string path) =>
+        "Z:" + Path.GetFullPath(path).Replace('/', '\\');
+
     private static string? FindOrbisPubCmd()
     {
+        string? env = Environment.GetEnvironmentVariable("ORBIS_PUB_CMD");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+
         var candidates = new[] {
             Path.Combine(AppContext.BaseDirectory, "orbis-pub-cmd.exe"),
             Path.Combine(Environment.CurrentDirectory, "orbis-pub-cmd.exe"),

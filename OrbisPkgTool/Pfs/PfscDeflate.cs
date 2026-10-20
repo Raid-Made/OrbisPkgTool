@@ -1,9 +1,10 @@
 using System.Runtime.InteropServices;
+using OrbisPkgTool.Util;
 
 namespace OrbisPkgTool.Pfs;
 
 /// <summary>
-/// Raw-deflate compressor with a 4 KiB history window, backed by zlib1.dll.
+/// Raw-deflate compressor with a 4 KiB history window, backed by native zlib.
 ///
 /// PFSC compressed blocks declare zlib CMF=0x48 (CINFO=4 → 4096-byte window)
 /// in their two-byte header. A deflate stream produced with the default
@@ -13,8 +14,8 @@ namespace OrbisPkgTool.Pfs;
 /// never reference more than 4096 bytes back, making the stream formally
 /// valid for the declared header.
 ///
-/// DLL discovery order: ORBISPKG_ZLIB env var → zlib1.dll next to the
-/// executable → Git for Windows mingw64 → the system PATH. When no zlib is
+/// Library discovery is handled by <see cref="NativeZlib"/> (zlib1.dll on
+/// Windows, libz.so.1 on Linux, libz.dylib on macOS). When no zlib is
 /// found, <see cref="IsAvailable"/> is false and callers fall back to
 /// SharpZipLib (the previously proven behavior — zlib-family decoders accept
 /// 32 KiB-window streams in practice because inflate only rejects distances
@@ -22,25 +23,25 @@ namespace OrbisPkgTool.Pfs;
 /// </summary>
 public static class PfscDeflate
 {
-    // z_stream (Windows ABI: unsigned long = 32 bits) — layout verified
-    // against the working inflate P/Invoke in the CLI's shadPS4 replica.
+    // z_stream. uLong fields use CULong: 32-bit on Windows, 64-bit on
+    // Linux/macOS, so the same layout matches zlib on every platform.
     [StructLayout(LayoutKind.Sequential)]
     private struct ZStream
     {
         public IntPtr next_in;
         public uint avail_in;
-        public uint total_in;
+        public CULong total_in;
         public IntPtr next_out;
         public uint avail_out;
-        public uint total_out;
+        public CULong total_out;
         public IntPtr msg;
         public IntPtr state;
         public IntPtr zalloc;
         public IntPtr zfree;
         public IntPtr opaque;
         public int data_type;
-        public uint adler;
-        public uint reserved;
+        public CULong adler;
+        public CULong reserved;
     }
 
     private const int ZOk = 0;
@@ -63,44 +64,15 @@ public static class PfscDeflate
     private static Deflate? _deflate;
     private static DeflateEnd? _deflateEnd;
 
-    /// <summary>True when zlib1.dll was found and its exports resolved.</summary>
+    /// <summary>True when native zlib was found and its exports resolved.</summary>
     public static bool IsAvailable => _loaded.Value;
 
     private static bool Load()
     {
-        // The current P/Invoke struct uses the Windows zlib ABI, where
-        // unsigned long is 32-bit. Unix x86-64 uses a different z_stream
-        // layout, so do not load native zlib there until a Unix ABI wrapper
-        // is implemented. Callers safely fall back to SharpZipLib.
-        if (!OperatingSystem.IsWindows())
-            return false;
-
-        try
-        {
-            IntPtr lib = IntPtr.Zero;
-            string? env = Environment.GetEnvironmentVariable("ORBISPKG_ZLIB");
-            if (!string.IsNullOrEmpty(env) && File.Exists(env))
-                NativeLibrary.TryLoad(env, out lib);
-            if (lib == IntPtr.Zero)
-                NativeLibrary.TryLoad(Path.Combine(AppContext.BaseDirectory, "zlib1.dll"), out lib);
-            if (lib == IntPtr.Zero)
-                NativeLibrary.TryLoad(@"C:\Program Files\Git\mingw64\bin\zlib1.dll", out lib);
-            if (lib == IntPtr.Zero)
-                NativeLibrary.TryLoad("zlib1", out lib);
-            if (lib == IntPtr.Zero) return false;
-
-            _deflateInit2 = Marshal.GetDelegateForFunctionPointer<DeflateInit2>(
-                NativeLibrary.GetExport(lib, "deflateInit2_"));
-            _deflate = Marshal.GetDelegateForFunctionPointer<Deflate>(
-                NativeLibrary.GetExport(lib, "deflate"));
-            _deflateEnd = Marshal.GetDelegateForFunctionPointer<DeflateEnd>(
-                NativeLibrary.GetExport(lib, "deflateEnd"));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        _deflateInit2 = NativeZlib.GetExport<DeflateInit2>("deflateInit2_");
+        _deflate = NativeZlib.GetExport<Deflate>("deflate");
+        _deflateEnd = NativeZlib.GetExport<DeflateEnd>("deflateEnd");
+        return _deflateInit2 != null && _deflate != null && _deflateEnd != null;
     }
 
     /// <summary>
@@ -137,7 +109,7 @@ public static class PfscDeflate
                 rc = _deflate(ref z, ZFinish);
             if (rc != ZStreamEnd)
                 return -1; // ran out of output — treat as incompressible
-            return (int)z.total_out;
+            return (int)z.total_out.Value;
         }
         finally
         {

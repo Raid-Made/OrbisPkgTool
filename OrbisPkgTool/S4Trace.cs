@@ -50,7 +50,12 @@ static class S4Trace
         Console.WriteLine("-- NP entry over-read (shadPS4 pkg.cpp 223-252) --");
         foreach (var id in new uint[] { 0x400, 0x401, 0x402, 0x403 })
         {
-            var e = entries.First(x => x.Id == id);
+            var e = entries.FirstOrDefault(x => x.Id == id);
+            if (e == default)
+            {
+                Console.WriteLine($"  entry 0x{id:X4}: not present");
+                continue;
+            }
             int rsize = (int)e.Size;
             int msize = rsize;
             if (msize % 16 != 0) msize = msize - msize % 16 + 16;
@@ -105,8 +110,11 @@ static class S4Trace
         byte[] tweakKey = hmac[0..16], dataKey = hmac[16..32];
 
         // ---- Decrypt initial `length` bytes ----
+        // Small PKGs can end before pfs_image_offset + length; read what exists
+        // and leave the rest zero, like a short read in shadPS4.
         byte[] enc = new byte[length];
-        fs.Position = (long)pfsImageOff; fs.ReadExactly(enc);
+        fs.Position = (long)pfsImageOff;
+        fs.ReadAtLeast(enc, (int)Math.Min(enc.Length, Math.Max(0, fs.Length - (long)pfsImageOff)), throwOnEndOfStream: false);
         byte[] decrypted = XtsDecrypt(enc, dataKey, tweakKey);
 
         // ---- GetPFSCOffset ----

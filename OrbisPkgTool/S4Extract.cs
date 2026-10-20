@@ -26,20 +26,26 @@ static class S4Extract
     const int InodeStride = 0xA8;  // D32 inode stride
 
     // ---- real zlib (same as shadPS4's DecompressPFSC: inflateInit, zlib stream) ----
-    const string ZlibPath = @"C:/Program Files/Git/mingw64/bin/zlib1.dll";
-    [DllImport(ZlibPath)] static extern int inflateInit_(ref ZStream strm, string version, int stream_size);
-    [DllImport(ZlibPath)] static extern int inflate(ref ZStream strm, int flush);
-    [DllImport(ZlibPath)] static extern int inflateEnd(ref ZStream strm);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int InflateInitFn(ref ZStream strm, [MarshalAs(UnmanagedType.LPStr)] string version, int stream_size);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int InflateFn(ref ZStream strm, int flush);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate int InflateEndFn(ref ZStream strm);
+    static readonly InflateInitFn? inflateInit_ = OrbisPkgTool.Util.NativeZlib.GetExport<InflateInitFn>("inflateInit_");
+    static readonly InflateFn? inflate = OrbisPkgTool.Util.NativeZlib.GetExport<InflateFn>("inflate");
+    static readonly InflateEndFn? inflateEnd = OrbisPkgTool.Util.NativeZlib.GetExport<InflateEndFn>("inflateEnd");
+    // uLong fields use CULong so the layout matches zlib on Windows and Unix.
     [StructLayout(LayoutKind.Sequential)]
     struct ZStream
     {
-        public IntPtr next_in; public uint avail_in; public uint total_in;
-        public IntPtr next_out; public uint avail_out; public uint total_out;
+        public IntPtr next_in; public uint avail_in; public CULong total_in;
+        public IntPtr next_out; public uint avail_out; public CULong total_out;
         public IntPtr msg; public IntPtr state;
         public IntPtr zalloc; public IntPtr zfree; public IntPtr opaque;
-        public int data_type; public uint adler; public uint reserved;
+        public int data_type; public CULong adler; public CULong reserved;
     }
-    static bool _zlibOk = File.Exists(ZlibPath);
+    static bool _zlibOk = inflateInit_ != null && inflate != null && inflateEnd != null;
 
     // Decompresses a full PFSC block the shadPS4 way: zlib inflate on the
     // complete stream (incl. the 2-byte header), 0x10000 output cap.
@@ -70,7 +76,7 @@ static class S4Extract
         // inflateInit_ requires the exact ZLIB_VERSION string of the DLL
         bool initOk = false;
         foreach (var ver in new[] { "1.2.13", "1.2.12", "1.2.11", "1.3", "1.3.1", "1.2.8" })
-            if (inflateInit_(ref z, ver, Marshal.SizeOf<ZStream>()) == 0) { initOk = true; break; }
+            if (inflateInit_!(ref z, ver, Marshal.SizeOf<ZStream>()) == 0) { initOk = true; break; }
         if (!initOk) { rc = -98; return false; }
         var inPin = GCHandle.Alloc(comp, GCHandleType.Pinned);
         var outPin = GCHandle.Alloc(decomp, GCHandleType.Pinned);
@@ -82,13 +88,13 @@ static class S4Extract
             // (Z_OK means "made progress, call again".)
             rc = 0;
             while (rc == 0)
-                rc = inflate(ref z, 4 /* Z_FINISH */);
+                rc = inflate!(ref z, 4 /* Z_FINISH */);
             return rc == 1 /* Z_STREAM_END */;
         }
         finally
         {
             outPin.Free(); inPin.Free();
-            inflateEnd(ref z);
+            inflateEnd!(ref z);
         }
     }
 

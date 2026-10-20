@@ -25,6 +25,28 @@ if (cmdArgs[0] is "-h" or "--help" && cmdArgs.Length >= 2)
     return;
 }
 
+// Developer commands that take positional arguments: print usage instead of
+// an IndexOutOfRange stack trace when arguments are missing.
+var debugUsage = new Dictionary<string, (int Args, string Usage)>
+{
+    ["pfsblock"]     = (2, "<pkg> <block>"),
+    ["iblock"]       = (2, "<pkg> <block>"),
+    ["dumpinner2"]   = (2, "<pkg> <out.pfs>"),
+    ["dumppfsc"]     = (2, "<pkg> <out.pfsc>"),
+    ["xtsdump"]      = (2, "<pkg> <out.bin>"),
+    ["deftest"]      = (1, "<pfsc-file>"),
+    ["inflatecheck"] = (1, "<pfsc-file> [out.dec]"),
+    ["leveltest"]    = (2, "<inner.pfs> <orbis.pfsc>"),
+    ["emptypayload"] = (1, "<out.pfsc>"),
+    ["blkcount"]     = (1, "<pkg>"),
+};
+if (debugUsage.TryGetValue(cmdArgs[0].ToLowerInvariant(), out var du) && cmdArgs.Length - 1 < du.Args)
+{
+    Console.Error.WriteLine($"usage: {cmdArgs[0].ToLowerInvariant()} {du.Usage}");
+    Environment.ExitCode = 2;
+    return;
+}
+
 try
 {
     switch (cmdArgs[0].ToLowerInvariant())
@@ -2957,7 +2979,7 @@ static byte[] Le32x(int v) => new[] { (byte)v, (byte)(v >> 8), (byte)(v >> 16), 
 
 static void RunSelfTest()
 {
-    Console.WriteLine("PkgKeySet self-test (n = p*q, e*d ≡ 1 mod phi):");
+    Console.WriteLine("PkgKeySet self-test (n = p*q, e*d ≡ 1 mod phi, CRT params):");
     bool dk3Ok = PkgKeySet.ValidateKeypair(PkgKeySet.Standard.DerivedKey3);
     bool fakeOk = PkgKeySet.ValidateKeypair(PkgKeySet.Standard.FakeKeyset);
     Console.WriteLine($"  DerivedKey3 (key index 3): {(dk3Ok ? "OK" : "FAILED")}");
@@ -3837,6 +3859,12 @@ orbis-build : Build a PKG from a GP4 project using Sony's orbis-pub-cmd
   Options:
     --out <out.pkg>       output file (default: <project>.pkg)
     --passcode <code>     32-char passcode (default: the fake-PKG passcode)
+
+  orbis-pub-cmd.exe (with its 'ext' folder) is found via ORBIS_PUB_CMD, next
+  to this tool, or in the current folder and its parents. On Linux/macOS it
+  runs through Wine (wine/wine64 on PATH, or ORBISPKG_WINE).
+
+  Note: writes a generated sce_sys/param.sfo and _orbis_build.gp4 into <folder>.
 
   Example:
     orbis-build project.gp4 Image0 --out my_game.pkg

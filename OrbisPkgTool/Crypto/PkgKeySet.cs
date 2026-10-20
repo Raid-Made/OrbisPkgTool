@@ -59,7 +59,7 @@ public sealed class PkgKeySet
             Q = Hex("d7a10f9a8bf2c91195329a8cf0d94047f568a00dbdc1fc432f65f9c3610f257754add758ac8440608d3ff3658975b5c62c511a2f1f22e4431154bec9b4c7b51b050bbc569acd4ad973685e5cfb92b78b0dfff507cab4c89b963c079e3e6b2a11f28ab18ad72e1ba5532406ed50b89067b1e241c69201ee10f061bbfbb27d4a73"),
             DP = Hex("52cc2da09c9e75e728ee3ddee345d14f941cccc88729453b8d6eab6e2aa7c71543a3048f905febf3384a77fa36b71576b6011a8e258782f155d8c6432ac0e598c932d1946fd901ba0681e06d88f2242a2501645cbff2d999673ef672eee4e2335cf80040e32a9af43d2286443cfb0aa57c3fccf5f116c4ac88b4de6294926a13"),
             DQ = Hex("7c9dad39e0d560149448197f8895d58b80ad858a4b773785d077bbbf89714a72cb726838ec02c67dc6440633511cc0ff958f0d75dc25bb0b7391a96d42d803b768d41e7562a37035797800c8f5ef15b9fc4e475ac870705b5298c0c2584a7096ccb810e12f788b2ba17ff9acdef0bb2be266e3229231215792c4b8f23e762037"),
-            InverseQ = Hex("459755d422085ef35cb4057afdaa4242ad9a8ca06cbb1d6854546e3e32e3537376f13e01ead3cfebeb233ec0beceec2c895fa8273a4cb7e674bc454c26c825ff34632537e14810c193a6afebbaa3a2f13def63d8f4fdd3eee25de933ccadba755c85afcea93dd1a217f3f698b3508e5ef6eb028ea162a7d62cec91ff1540d2e3"),
+            InverseQ = Hex("459755d422085ef35cb4057afdaa4242ad9a8ca06cbb1d6854546e3e32e3537376f13e01ead3cfebeb233ec0beceec2c895fa8273a4cb7e674bc454c26c825ff34632537e14810c193a6afebbae3a2f13def63d8f4fdd3eee25de933ccadba755c85afcea93dd1a217f3f698b3508e5ef6eb028ea162a7d62cec91ff1540d2e3"),
             Exponent = Hex("010001"),
         },
         FakeKeyset = new RSAParameters
@@ -86,8 +86,10 @@ public sealed class PkgKeySet
     }
 
     /// <summary>
-    /// Sanity check: verifies modulus = p * q and e * d ≡ 1 mod (p-1)(q-1)
-    /// for a full RSA keypair. Used by the validation harness to catch
+    /// Sanity check: verifies modulus = p * q, e * d ≡ 1 mod (p-1)(q-1) and
+    /// the CRT parameters (dp, dq, q^-1 mod p) for a full RSA keypair.
+    /// OpenSSL (.NET on Linux/macOS) rejects keys with bad CRT values that
+    /// Windows CNG accepts. Used by the validation harness to catch
     /// transcription errors in the embedded constants.
     /// </summary>
     public static bool ValidateKeypair(RSAParameters k)
@@ -102,6 +104,11 @@ public sealed class PkgKeySet
             if (n != p * q) return false;
             var phi = (p - 1) * (q - 1);
             if ((e * d) % phi != BigInteger.One) return false;
+            var dp = new BigInteger(k.DP, isUnsigned: true, isBigEndian: true);
+            var dq = new BigInteger(k.DQ, isUnsigned: true, isBigEndian: true);
+            var iq = new BigInteger(k.InverseQ, isUnsigned: true, isBigEndian: true);
+            if (dp != d % (p - 1) || dq != d % (q - 1)) return false;
+            if ((iq * q) % p != BigInteger.One) return false;
             return true;
         }
         catch

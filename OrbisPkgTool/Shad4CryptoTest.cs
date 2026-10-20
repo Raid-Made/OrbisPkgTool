@@ -98,7 +98,8 @@ static class Shad4CryptoTest
 
         // 6. Decrypt first `length` bytes of outer PFS with XTS, sector 0..n
         // XTS = AES-ECB(tweakKey, LE64(sector)) then AES-ECB(dataKey, block^tweak)
-        byte[] enc = new byte[length];
+        // Small PKGs can end before pfs_image_offset + length; decrypt what exists.
+        byte[] enc = new byte[(int)Math.Min((long)length, Math.Max(0, fs.Length - (long)pfsImageOff)) & ~0xFFF];
         fs.Position = (long)pfsImageOff; fs.ReadExactly(enc);
         byte[] decrypted = XtsDecrypt(enc, dataKey, tweakKey);
         Console.WriteLine($"  decrypted {decrypted.Length} bytes");
