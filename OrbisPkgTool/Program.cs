@@ -696,6 +696,8 @@ static void RunSfo(string[] args)
                 var sfo = category == "ac"
                     ? OrbisPkgTool.Sfo.ParamSfo.CreateAddonTemplate(title, titleId, contentId)
                     : OrbisPkgTool.Sfo.ParamSfo.CreateGameTemplate(title, titleId, contentId);
+                if (category == "gp")
+                    sfo.SetString("CATEGORY", "gp", 0x4); // patch: game template with the patch category
                 File.WriteAllBytes(outFile, sfo.Serialize());
                 Console.WriteLine($"Created {outFile}");
                 break;
@@ -802,7 +804,7 @@ static void RunRestructure(string[] args)
         return;
     }
 
-    Console.WriteLine($"Image0: {root}\\Image0");
+    Console.WriteLine($"Image0: {img0}");
 
     // Count what we have
     int image0Files = Directory.GetFiles(img0, "*", SearchOption.AllDirectories).Length;

@@ -219,6 +219,22 @@ public static class PkgBuilder
         return disabledCount > 0 ? result : null;
     }
 
+    /// <summary>
+    /// The volume a path lives on. Windows uses the drive root; on Unix every
+    /// path's root is "/", so pick the deepest mount point containing the path
+    /// (e.g. a tmpfs /tmp or a separate /home).
+    /// </summary>
+    private static DriveInfo VolumeOf(string path)
+    {
+        string full = Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows())
+            return new DriveInfo(Path.GetPathRoot(full) ?? ".");
+        return DriveInfo.GetDrives()
+            .Where(d => d.Name == "/" || full == d.Name.TrimEnd('/') || full.StartsWith(d.Name.TrimEnd('/') + "/", StringComparison.Ordinal))
+            .OrderByDescending(d => d.Name.Length)
+            .FirstOrDefault() ?? new DriveInfo("/");
+    }
+
     /// <summary>Streams the build through temp files for games whose inner PFS exceeds 2 GB.</summary>
     private static void BuildLarge(Gp4Project project, List<PfsSourceFile> pfsFiles,
         List<(string Path, byte[] Data)> sc0Files, byte[][] dk, string passcode, string outputPath,
@@ -234,11 +250,11 @@ public static class PkgBuilder
         long estInner = pfsFiles.Sum(f => (f.Length + PfsFormat.BlockSize - 1) / PfsFormat.BlockSize * PfsFormat.BlockSize);
         long requiredTemp = (long)(estInner * PfsFormat.TempDiskMultiplier) + estInner / 4;
         long requiredOutput = estInner / 4 + estInner; // final PKG ≈ PFSC + header overhead
-        string tempRoot = Path.GetPathRoot(Path.GetFullPath(Path.GetTempPath())) ?? ".";
-        string outRoot = Path.GetPathRoot(Path.GetFullPath(outputPath)) ?? ".";
-        if (string.Equals(tempRoot, outRoot, StringComparison.OrdinalIgnoreCase))
+        var tempDrive = VolumeOf(Path.GetTempPath());
+        var outDrive = VolumeOf(outputPath);
+        if (string.Equals(tempDrive.Name, outDrive.Name, StringComparison.OrdinalIgnoreCase))
         {
-            var drive = new DriveInfo(tempRoot);
+            var drive = tempDrive;
             // Same volume: the temp files are deleted before the PKG reaches
             // full size, so the peak is max(temp, output), not the sum.
             long peak = Math.Max(requiredTemp, requiredOutput);
@@ -249,13 +265,11 @@ public static class PkgBuilder
         }
         else
         {
-            var tempDrive = new DriveInfo(tempRoot);
             if (tempDrive.AvailableFreeSpace < requiredTemp)
                 throw new InvalidOperationException(
                     $"Estimated temporary disk requirement: {requiredTemp / 1e9:F1} GB. " +
-                    $"Available on {tempDrive.Name} (%TEMP%): {tempDrive.AvailableFreeSpace / 1e9:F1} GB. " +
-                    "Aborting before build (set TMP to a drive with more space).");
-            var outDrive = new DriveInfo(outRoot);
+                    $"Available on {tempDrive.Name} (temp): {tempDrive.AvailableFreeSpace / 1e9:F1} GB. " +
+                    $"Aborting before build (set {(OperatingSystem.IsWindows() ? "TMP" : "TMPDIR")} to a drive with more space).");
             if (outDrive.AvailableFreeSpace < requiredOutput)
                 throw new InvalidOperationException(
                     $"Estimated output disk requirement: {requiredOutput / 1e9:F1} GB. " +

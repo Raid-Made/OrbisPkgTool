@@ -65,7 +65,7 @@ OrbisPkgTool.Gui/
 
 Requirements:
 
-- Windows
+- Windows (CLI and GUI) or Linux (CLI only; the GUI is Windows Forms)
 - .NET 10 SDK
 
 Build both the CLI and GUI from the repository root:
@@ -79,6 +79,15 @@ Build only the CLI:
 ```powershell
 dotnet build OrbisPkgTool/OrbisPkgTool.csproj
 ```
+
+On Linux, build and run the CLI with:
+
+```bash
+dotnet build OrbisPkgTool/OrbisPkgTool.csproj -c Release
+./OrbisPkgTool/bin/Release/net10.0/OrbisPkgTool --help
+```
+
+Builds stage temporary files under `$TMPDIR` (default `/tmp`). If `/tmp` is a small or RAM-backed tmpfs, point `TMPDIR` at a disk with enough free space before building large packages. `orbis-build` needs Sony's Windows-only `orbis-pub-cmd.exe` and is not supported on Linux.
 
 SharpZipLib is restored from NuGet. A native `zlib1.dll` is optional and is used for PFSC compression when found. The search order is:
 
@@ -112,7 +121,7 @@ bench       Measure listing speed
 selftest    Check the built-in crypto keys
 ```
 
-Run `OrbisPkgTool.exe <command> --help` for the full options accepted by a command.
+Run `OrbisPkgTool <command> --help` (`OrbisPkgTool.exe` on Windows) for the full options accepted by a command.
 
 The default fake-PKG passcode is:
 
