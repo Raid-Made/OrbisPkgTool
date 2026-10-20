@@ -3904,7 +3904,7 @@ repack : Extract a PKG and rebuild it, in one command
     repack <pkg> [options]
 
   Options:
-    --out <out.pkg>        output file (default: work-dir\<pkg>_rebuilt.pkg)
+    --out <out.pkg>        output file (default: work-dir/<pkg>_rebuilt.pkg)
     --passcode <code>      32-char passcode (default: the fake-PKG passcode)
     --validate             run the 8-stage check on the result
     --pfsc-mode <mode>     compressed (default) | store
@@ -3939,7 +3939,7 @@ merge : Integrate an update PKG into its base PKG, producing one PKG
     merge <base.pkg> <update.pkg> [options]
 
   Options:
-    --out <out.pkg>        output file (default: work-dir\<base>_merged.pkg)
+    --out <out.pkg>        output file (default: work-dir/<base>_merged.pkg)
     --passcode <code>      shared passcode for both PKGs (default: all-zeros)
     --base-passcode <c>    base PKG passcode (rare: when base uses a non-
                            default passcode; overrides --passcode for base)
@@ -3968,7 +3968,7 @@ merge : Integrate an update PKG into its base PKG, producing one PKG
             h.WriteLine(@"
 restructure : Tidy an extracted PKG dump so it is ready for gp4gen/build
 
-  Merges Sc0\ into Image0\sce_sys\ and removes files the build
+  Merges Sc0/ into Image0/sce_sys/ and removes files the build
   regenerates (license, playgo, psreserved...).
 
   Usage:
@@ -3996,7 +3996,7 @@ sweep : Check every .pkg under a folder (batch mode)
     --list             also list the files inside each PKG (slower)
 
   Example:
-    sweep ""B:\PKG collection"" --out report.tsv
+    sweep ~/PKGs --out report.tsv
 "); break;
         case "sfo":
             h.WriteLine(@"
@@ -4015,7 +4015,7 @@ sfo : param.sfo tools (create, read, edit, check)
     --category <type>     gd (game, default) | ac (addon/DLC) | gp (patch)
 
   Examples:
-    sfo read sce_sys\param.sfo
+    sfo read sce_sys/param.sfo
     sfo create param.sfo --title ""My Game"" --title-id CUSA00001
     sfo set param.sfo APP_VER 01.02
 "); break;

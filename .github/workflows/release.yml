@@ -1,0 +1,90 @@
+name: Release
+
+# Builds self-contained Linux downloads (CLI + GUI, .NET runtime included)
+# and publishes them as a GitHub Release tagged v<version>.
+#
+#   gh workflow run release.yml -R Raid-Made/OrbisPkgTool -f version=1.1.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number, e.g. 1.1.0 (the release is tagged v<version>)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check version
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Version must look like 1.2.3 or 1.2.3-beta.1 (got '$VERSION')."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish linux-x64 and linux-arm64
+        shell: bash
+        run: |
+          mkdir -p dist
+          for rid in linux-x64 linux-arm64; do
+            name="OrbisPkgTool-${VERSION}-${rid}"
+            out="dist/${name}"
+            # GUI first, then the CLI into the same folder: both are self-contained
+            # and share the bundled runtime; the GUI runs the CLI next to it.
+            for project in OrbisPkgTool.Gui.Avalonia/OrbisPkgTool.Gui.Avalonia.csproj OrbisPkgTool/OrbisPkgTool.csproj; do
+              dotnet publish "$project" -c Release -r "$rid" --self-contained true \
+                -p:Version="${VERSION%%-*}" -p:InformationalVersion="$VERSION" -o "$out"
+            done
+            rm -f "$out"/*.pdb
+            cp packaging/linux/install.sh packaging/linux/orbispkgtool.svg README.md LICENSE "$out/"
+            chmod +x "$out/install.sh" "$out/OrbisPkgTool" "$out/OrbisPkgTool.Gui.Avalonia"
+            tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          done
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS.txt)
+          ls -la dist
+
+      - name: Smoke test the x64 build
+        shell: bash
+        run: |
+          bin="dist/OrbisPkgTool-${VERSION}-linux-x64/OrbisPkgTool"
+          "$bin" --help | head -3
+          "$bin" selftest
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          notes=$(cat <<EOF
+          OrbisPkgTool for Linux ${VERSION}: command-line tool and desktop GUI. The .NET runtime is included, so nothing else needs installing.
+
+          **Install**
+          \`\`\`bash
+          tar xzf OrbisPkgTool-${VERSION}-linux-x64.tar.gz      # linux-arm64 for ARM devices
+          cd OrbisPkgTool-${VERSION}-linux-x64
+          ./install.sh                                          # adds orbispkgtool and orbispkgtool-gui
+          \`\`\`
+
+          Or run it in place without installing: \`./OrbisPkgTool --help\` (CLI) and \`./OrbisPkgTool.Gui.Avalonia\` (GUI).
+
+          Built from ${GITHUB_SHA}. See the README for the full command reference.
+          EOF
+          )
+          gh release create "v${VERSION}" dist/*.tar.gz dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "OrbisPkgTool ${VERSION} for Linux" \
+            --notes "$notes" \
+            --latest
