@@ -5,10 +5,10 @@ namespace OrbisPkgTool.Gui;
 /// option surface of each. Built from the CLI's Program.cs dispatch table.
 ///
 /// Split into two lists for the two-tab GUI workflow:
-///   - <see cref="PackageOps"/>: 21 PKG-centric operations (pkg + passcode are
+///   - <see cref="PackageOps"/>: 22 PKG-centric operations (pkg + passcode are
 ///     supplied by the Package bar, NOT listed as fields — the GUI injects
 ///     them at run time).
-///   - <see cref="ToolOps"/>: 20 self-contained non-PKG operations (build,
+///   - <see cref="ToolOps"/>: 21 self-contained non-PKG operations (build,
 ///     repack, SFO/TRP, standalone tools).
 /// </summary>
 public static class CommandRegistry
@@ -27,7 +27,7 @@ public static class CommandRegistry
     };
 
     // ==================================================================
-    // Package ops: 21 — pkg/passcode injected by PackageBar at run time,
+    // Package ops: 22 — pkg/passcode injected by PackageBar at run time,
     // so the per-op Fields never list them.
     // ==================================================================
     static List<CommandDef> BuildPackageOps()
@@ -124,6 +124,22 @@ public static class CommandRegistry
             Name = "inspect", Group = "Inspect", Title = "Full PFS tree dump",
             Description = "Dump the full PFS tree (outer + inner) — useful when debugging.",
             CliWord = "inspect",
+            Fields = [],
+            BuildArgs = f =>
+            {
+                var a = new List<string>();
+                if (f["passcode"] is { Length: > 0 } p) { a.Add("--passcode"); a.Add(p); }
+                a.Add(f["pkg"]);
+                return a.ToArray();
+            },
+        });
+
+        // --------------------------------------------------------- ekpfs
+        cmds.Add(new CommandDef
+        {
+            Name = "ekpfs", Group = "Inspect", Title = "Recover the EKPFS key",
+            Description = "Recover and print the 32-byte EKPFS (Image0/PFS key) from a fake PKG. Use it with convert-update.",
+            CliWord = "ekpfs",
             Fields = [],
             BuildArgs = f =>
             {
@@ -326,7 +342,7 @@ public static class CommandRegistry
     }
 
     // ==================================================================
-    // Tool ops: 20 — self-contained (fields include every CLI input).
+    // Tool ops: 21 — self-contained (fields include every CLI input).
     // ==================================================================
     static List<CommandDef> BuildToolOps()
     {
@@ -502,6 +518,45 @@ public static class CommandRegistry
                 if (f["keepwork"] == "1") a.Add("--keep-work");
                 a.Add(f["basepkg"]);
                 a.Add(f["updpkg"]);
+                return a.ToArray();
+            },
+        });
+
+        // ------------------------------------------------ convert-update
+        cmds.Add(new CommandDef
+        {
+            Name = "convert-update", Group = "Build", Title = "Convert a retail update to a fake patch (experimental)",
+            Description = "Decrypt a retail update PKG with a supplied EKPFS and rebuild it as a fake patch PKG. Preserves the original PARAM.SFO, content type and flags. Experimental: base-package remarry is not implemented yet.",
+            CliWord = "convert-update",
+            Fields = [
+                new CommandField { Id = "pkg", Label = "Update PKG", Kind = FieldKind.File,
+                    Filter = "PS4 Packages (*.pkg)|*.pkg|All files (*.*)|*.*", Position = 0 },
+                new CommandField { Id = "ekpfs", Label = "EKPFS (64 hex)", Kind = FieldKind.Text,
+                    Hint = "Required: 32-byte key used to decrypt Image0/PFS" },
+                Out(),
+                new CommandField { Id = "validate", Label = "Validate after build", Kind = FieldKind.Check,
+                    Hint = "Run the fake-tolerant structural check on the result" },
+                new CommandField { Id = "pfsc", Label = "PFSC mode", Kind = FieldKind.Combo,
+                    Choices = ["store", "compressed"], Default = "compressed",
+                    ChoiceRemarks = ["no compression", "compress (default)"] },
+                new CommandField { Id = "workers", Label = "Workers", Kind = FieldKind.Text, Default = "1",
+                    Hint = "Threads for PFSC compression (0 = all cores, default 1)" },
+                new CommandField { Id = "workdir", Label = "Work directory", Kind = FieldKind.Folder,
+                    Hint = "Keep intermediate files here (optional)" },
+                new CommandField { Id = "keepwork", Label = "Keep work dir", Kind = FieldKind.Check,
+                    Hint = "Don't auto-delete intermediates on success" },
+            ],
+            BuildArgs = f =>
+            {
+                var a = new List<string>();
+                if (f["ekpfs"] is { Length: > 0 } k) { a.Add("--ekpfs"); a.Add(k); }
+                if (f["out"] is { Length: > 0 } o) { a.Add("--out"); a.Add(o); }
+                if (f["validate"] == "1") a.Add("--validate");
+                if (f["pfsc"] is { Length: > 0 } m) { a.Add("--pfsc-mode"); a.Add(m); }
+                if (f["workers"] is { Length: > 0 } w) { a.Add("--workers"); a.Add(w); }
+                if (f["workdir"] is { Length: > 0 } wd) { a.Add("--work"); a.Add(wd); }
+                if (f["keepwork"] == "1") a.Add("--keep-work");
+                a.Add(f["pkg"]);
                 return a.ToArray();
             },
         });

@@ -1,6 +1,6 @@
 # OrbisPkgTool
 
-OrbisPkgTool is a C#/.NET 10 toolkit for PS4 fake PKGs. It includes a command-line tool and a Windows Forms front end.
+OrbisPkgTool is a C#/.NET 10 toolkit for PS4 fake PKGs. It includes a command-line tool, a Windows Forms front end, and a cross-platform (Linux/Windows/macOS) Avalonia front end.
 
 The built-in reader and builder handle PKG, PFS, PFSC, package crypto, and compression without requiring LibOrbisPkg or `orbis-pub-cmd.exe` at runtime. `orbis-pub-cmd.exe` is still supported as an optional reference build path.
 
@@ -23,7 +23,7 @@ The built-in reader and builder handle PKG, PFS, PFSC, package crypto, and compr
 - Decode ATRAC9 `.at9` audio to WAV
 - Check PSN for official game updates
 - Run package diagnostics and compatibility checks
-- Use the same operations from the Windows Forms GUI
+- Use the same operations from the Windows Forms GUI or the cross-platform Avalonia GUI
 
 ## Current merge workflow
 
@@ -59,13 +59,16 @@ OrbisPkgTool/
   Psn/                      PSN update checking
 OrbisPkgTool.Gui/
   OrbisPkgTool.Gui.csproj   Windows Forms front end
+  CommandRegistry.cs        GUI command definitions (shared by both GUIs)
+OrbisPkgTool.Gui.Avalonia/
+  OrbisPkgTool.Gui.Avalonia.csproj   cross-platform front end (Linux, Windows, macOS)
 ```
 
 ## Build
 
 Requirements:
 
-- Windows (CLI and GUI) or Linux (CLI only; the GUI is Windows Forms)
+- Windows, Linux, or macOS (the Windows Forms GUI is Windows-only; the Avalonia GUI runs everywhere)
 - .NET 10 SDK
 
 Build both the CLI and GUI from the repository root:
@@ -86,6 +89,23 @@ On Linux, build and run the CLI with:
 dotnet build OrbisPkgTool/OrbisPkgTool.csproj -c Release
 ./OrbisPkgTool/bin/Release/net10.0/OrbisPkgTool --help
 ```
+
+Run the cross-platform GUI from source:
+
+```bash
+dotnet run --project OrbisPkgTool.Gui.Avalonia -c Release
+```
+
+Or publish a folder you can copy anywhere (the CLI is included next to the GUI, which runs it for every operation):
+
+```bash
+dotnet publish OrbisPkgTool.Gui.Avalonia -c Release -r linux-x64 --self-contained false -o out/OrbisPkgTool
+./out/OrbisPkgTool/OrbisPkgTool.Gui.Avalonia
+```
+
+Use `--self-contained true` to bundle the .NET runtime so the target machine does not need it installed. GUI settings are stored in `~/.config/OrbisPkgTool/gui-settings.txt`.
+
+![OrbisPkgTool Avalonia GUI on Linux](screenshots/linux-gui.png)
 
 Builds stage temporary files under `$TMPDIR` (default `/tmp`). If `/tmp` is a small or RAM-backed tmpfs, point `TMPDIR` at a disk with enough free space before building large packages. `orbis-build` runs Sony's Windows-only `orbis-pub-cmd.exe` through Wine (`wine` on `PATH`, or set `ORBISPKG_WINE`); point `ORBIS_PUB_CMD` at the exe if it is not next to the tool.
 
